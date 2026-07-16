@@ -230,7 +230,7 @@ jobs:
             ver: "ipk"
 
           - platform: aarch64_cortex-a53
-            url_sdk: https://downloads.openwrt.org/snapshots/targets/mediatek/filogic/openwrt-sdk-mediatek-filogic_gcc-14.4.0_musl.Linux-x86_64.tar.zst
+            url_sdk: https://downloads.openwrt.org/snapshots/targets/qualcommax/ipq60xx/openwrt-sdk-qualcommax-ipq60xx_gcc-14.4.0_musl.Linux-x86_64.tar.zst
             ver: "ipk"
 
           - platform: aarch64_cortex-a72

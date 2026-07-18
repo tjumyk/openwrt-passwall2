@@ -246,7 +246,6 @@ jobs:
       matrix:
         include:
           - platform: aarch64_cortex-a53
-            url_sdk: ${{ env.openwrt_sdk }}
             ver: "ipk"
 
     steps:
@@ -268,8 +267,8 @@ jobs:
 
       - name: ${{ matrix.platform }} sdk download
         run: |
-          wget ${{ matrix.url_sdk }}
-          file_name=$(echo ${{matrix.url_sdk}} | awk -F/ '{print $NF}')
+          wget ${{ env.openwrt_sdk }}
+          file_name=$(echo ${{ env.openwrt_sdk }} | awk -F/ '{print $NF}')
           mkdir sdk
           if [[ $file_name == *.tar.xz ]]; then
             tar -xJf $file_name -C ./sdk --strip-components=1

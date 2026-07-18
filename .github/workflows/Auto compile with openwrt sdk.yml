@@ -15,8 +15,13 @@ env:
   TZ: Asia/Shanghai
   passwall2: ${{ github.repository }}
   packages: Openwrt-Passwall/openwrt-passwall-packages
-  package_names: "chinadns-ng geoview hysteria naiveproxy tcping shadowsocks-rust shadowsocksr-libev simple-obfs sing-box v2ray-geodata v2ray-plugin xray-core"
-  package_release: "chinadns-ng geoview hysteria naiveproxy tcping shadowsocks-rust shadowsocksr-libev simple-obfs sing-box v2ray-geoip v2ray-geosite v2ray-plugin xray-core"
+  package_names: "chinadns-ng geoview tcping v2ray-geodata xray-core"
+  openwrt_package_names: "lyaml"
+  package_release: "chinadns-ng geoview lyaml tcping v2ray-geoip v2ray-geosite xray-core"
+  # GL.iNet GL-AXT1800 minimal profile (~40MB overlay): Xray + nftables only
+  openwrt_release: "23.05.5"
+  openwrt_sdk: https://downloads.openwrt.org/releases/23.05.5/targets/ipq807x/generic/openwrt-sdk-23.05.5-ipq807x-generic_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+  target_platform: aarch64_cortex-a53
 
 permissions:
   contents: write
@@ -114,7 +119,7 @@ jobs:
 
       - name: Initialization environment
         run: |
-          url_sdk="https://downloads.openwrt.org/snapshots/targets/x86/64/openwrt-sdk-x86-64_gcc-14.4.0_musl.Linux-x86_64.tar.zst"
+          url_sdk="${{ env.openwrt_sdk }}"
           wget $url_sdk
           file_name=$(echo $url_sdk | awk -F/ '{print $NF}')
           mkdir sdk
@@ -151,22 +156,19 @@ jobs:
 
 
           rm -rf temp_resp
-          git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
-          echo "update golang version"
+          git clone -b openwrt-23.05 --single-branch https://github.com/openwrt/packages.git temp_resp
+          echo "sync golang/rust with OpenWrt ${{ env.openwrt_release }}"
           rm -rf feeds/packages/lang/golang
           cp -r temp_resp/lang/golang feeds/packages/lang
-          echo "update rust version"
           rm -rf feeds/packages/lang/rust
           cp -r temp_resp/lang/rust feeds/packages/lang
           rm -rf temp_resp
 
-          git clone -b main --single-branch https://github.com/openwrt/openwrt.git temp_resp
-          cp -f temp_resp/scripts/patch-kernel.sh scripts/
-          rm -rf temp_resp
-
-          echo "fixed rust host build error"
-          sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
-          grep -q -- '--ci false \\' feeds/packages/lang/rust/Makefile || sed -i '/x\.py \\/a \        --ci false \\' feeds/packages/lang/rust/Makefile
+          if [ -f feeds/packages/lang/rust/Makefile ]; then
+            echo "fixed rust host build error"
+            sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
+            grep -q -- '--ci false \\' feeds/packages/lang/rust/Makefile || sed -i '/x\.py \\/a \        --ci false \\' feeds/packages/lang/rust/Makefile
+          fi
 
           ./scripts/feeds update -a
           ./scripts/feeds install -a
@@ -191,7 +193,30 @@ jobs:
           echo "CONFIG_LUCI_LANG_zh_Hans=y" >> .config
           echo "CONFIG_LUCI_LANG_zh_Hant=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-passwall2=m" >> .config
+          echo "CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_Xray=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y" >> .config
           make defconfig
+          for opt in \
+            CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_All \
+            CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_SingBox \
+            CONFIG_PACKAGE_luci-app-passwall2_Iptables_Transparent_Proxy \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Haproxy \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Hysteria \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_NaiveProxy \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Client \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Server \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Simple_Obfs \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin
+          do
+            sed -i "/^${opt}=y/d" .config
+            grep -q "^# ${opt} is not set" .config || echo "# ${opt} is not set" >> .config
+          done
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_Xray=y' .config \
+            || echo 'CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_Xray=y' >> .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y' .config \
+            || echo 'CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y' >> .config
           echo "make package/luci-app-passwall2/{clean,compile} -j$(nproc)"
           make package/luci-app-passwall2/{clean,compile} -j$(nproc) V=s || make package/luci-app-passwall2/{clean,compile} -j1 V=s
           mkdir upload
@@ -221,7 +246,7 @@ jobs:
       matrix:
         include:
           - platform: aarch64_cortex-a53
-            url_sdk: https://downloads.openwrt.org/snapshots/targets/qualcommax/ipq60xx/openwrt-sdk-qualcommax-ipq60xx_gcc-14.4.0_musl.Linux-x86_64.tar.zst
+            url_sdk: ${{ env.openwrt_sdk }}
             ver: "ipk"
 
     steps:
@@ -293,22 +318,19 @@ jobs:
 
 
           rm -rf temp_resp
-          git clone -b master --single-branch https://github.com/openwrt/packages.git temp_resp
-          echo "update golang version"
+          git clone -b openwrt-23.05 --single-branch https://github.com/openwrt/packages.git temp_resp
+          echo "sync golang/rust with OpenWrt ${{ env.openwrt_release }}"
           rm -rf feeds/packages/lang/golang
           cp -r temp_resp/lang/golang feeds/packages/lang
-          echo "update rust version"
           rm -rf feeds/packages/lang/rust
           cp -r temp_resp/lang/rust feeds/packages/lang
           rm -rf temp_resp
 
-          git clone -b main --single-branch https://github.com/openwrt/openwrt.git temp_resp
-          cp -f temp_resp/scripts/patch-kernel.sh scripts/
-          rm -rf temp_resp
-
-          echo "fixed rust host build error"
-          sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
-          grep -q -- '--ci false \\' feeds/packages/lang/rust/Makefile || sed -i '/x\.py \\/a \        --ci false \\' feeds/packages/lang/rust/Makefile
+          if [ -f feeds/packages/lang/rust/Makefile ]; then
+            echo "fixed rust host build error"
+            sed -i 's/--set=llvm\.download-ci-llvm=true/--set=llvm.download-ci-llvm=false/' feeds/packages/lang/rust/Makefile
+            grep -q -- '--ci false \\' feeds/packages/lang/rust/Makefile || sed -i '/x\.py \\/a \        --ci false \\' feeds/packages/lang/rust/Makefile
+          fi
 
           ./scripts/feeds update -a
           ./scripts/feeds install -a
@@ -323,20 +345,30 @@ jobs:
           echo "CONFIG_AUTOREMOVE=n" >> .config
           echo "CONFIG_SIGNED_PACKAGES=n" >> .config
           echo "CONFIG_PACKAGE_luci-app-passwall2=m" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_All=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_Iptables_Transparent_Proxy=y" >> .config
+          echo "CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_Xray=y" >> .config
           echo "CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Haproxy=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Hysteria=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_NaiveProxy=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Client=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Server=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Simple_Obfs=y" >> .config
-          echo "CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin=y" >> .config
-
           make defconfig
+          for opt in \
+            CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_All \
+            CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_SingBox \
+            CONFIG_PACKAGE_luci-app-passwall2_Iptables_Transparent_Proxy \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Haproxy \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Hysteria \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_NaiveProxy \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Client \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Shadowsocks_Rust_Server \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Client \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_ShadowsocksR_Libev_Server \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_Simple_Obfs \
+            CONFIG_PACKAGE_luci-app-passwall2_INCLUDE_V2ray_Plugin
+          do
+            sed -i "/^${opt}=y/d" .config
+            grep -q "^# ${opt} is not set" .config || echo "# ${opt} is not set" >> .config
+          done
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_Xray=y' .config \
+            || echo 'CONFIG_PACKAGE_luci-app-passwall2_Basic_Core_Xray=y' >> .config
+          grep -q '^CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y' .config \
+            || echo 'CONFIG_PACKAGE_luci-app-passwall2_Nftables_Transparent_Proxy=y' >> .config
 
       - name: ${{ matrix.platform }} compile
         id: compile
@@ -350,6 +382,15 @@ jobs:
                   echo "-----------compiled $package ---------------"
                   echo ""
               fi
+          done
+
+          for package in ${{ env.openwrt_package_names }}; do
+              echo "-----------begin compile $package (openwrt packages feed) ---------------"
+              ./scripts/feeds install "$package"
+              sleep 10s
+              make package/$package/compile -j$(nproc) V=s || make package/$package/compile -j1 V=s
+              echo "-----------compiled $package ---------------"
+              echo ""
           done
 
           echo "status=success" >> $GITHUB_OUTPUT
@@ -394,6 +435,20 @@ jobs:
           echo "![](https://img.shields.io/github/downloads/${{ env.passwall2 }}/${{needs.job_check.outputs.passwall2_version}}/total?style=flat-square)" >> release.txt
           echo "### Passwall2 Info" >> release.txt
           echo "**:minidisc: Passwall2 Version: ${{needs.job_check.outputs.passwall2_version}}**" >> release.txt
+          echo "" >> release.txt
+          echo "### Target device" >> release.txt
+          echo "**GL.iNet GL-AXT1800 / GL-AX1800** on firmware **23.05-SNAPSHOT** (ipq60xx, fw4/nftables)" >> release.txt
+          echo "" >> release.txt
+          echo "Minimal profile: **Xray core + nftables transparent proxy** (~40MB overlay)" >> release.txt
+          echo "" >> release.txt
+          echo "Built with OpenWrt **${{ env.openwrt_release }}** SDK; binary arch: **${{ env.target_platform }}**" >> release.txt
+          echo "" >> release.txt
+          echo "On GL.iNet firmware, add to \`/etc/opkg.conf\` if \`opkg install\` reports arch mismatch:" >> release.txt
+          echo "\`\`\`" >> release.txt
+          echo "arch all 100" >> release.txt
+          echo "arch aarch64_cortex-a53_neon-vfpv4 200" >> release.txt
+          echo "arch aarch64_cortex-a53 300" >> release.txt
+          echo "\`\`\`" >> release.txt
 
           echo "### Packages Version" >> release.txt
           echo "**package name**|**package version**" >> release.txt
@@ -407,6 +462,12 @@ jobs:
           done
           echo "**:ice_cube: v2ray-geoip**|**$(awk -F ':=' '/GEOIP_VER:=/{print $2}' feeds/passwall_packages/v2ray-geodata/Makefile)**" >> release.txt
           echo "**:ice_cube: v2ray-geosite**|**$(awk -F ':=' '/GEOSITE_VER:=/{print $2}' feeds/passwall_packages/v2ray-geodata/Makefile)**" >> release.txt
+
+          for pkg in ${{ env.openwrt_package_names }}; do
+            makefile=$(find feeds/packages -type f -path "*/$pkg/Makefile" | head -1)
+            version=$(awk -F ':=' '/PKG_VERSION:=/{print $2}' "$makefile" | sed 's/\r//g')
+            echo "**:ice_cube: $pkg**|**${version}**" >> release.txt
+          done
 
           touch release.txt
           echo "status=success" >> $GITHUB_OUTPUT
